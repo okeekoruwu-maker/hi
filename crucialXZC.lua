@@ -1685,6 +1685,32 @@ return result.Instance:IsDescendantOf(
 end
 
 --==================================================
+-- FOV OFFSET RAY
+-- Devuelve el vector de dirección mundial que
+-- corresponde al centro del FOV desplazado.
+--==================================================
+
+local function getFOVRay(camera)
+
+	local viewport = camera.ViewportSize
+
+	-- centro de pantalla + offset en píxeles
+	local screenCenter = Vector2.new(
+		viewport.X / 2 + Settings.FOVOffsetX,
+		viewport.Y / 2 + Settings.FOVOffsetY
+	)
+
+	-- Unproject: convierte pixel → ray de mundo
+	local ray = camera:ScreenPointToRay(
+		screenCenter.X,
+		screenCenter.Y
+	)
+
+	return ray.Direction
+
+end
+
+--==================================================
 -- CLOSEST PLAYER
 --==================================================
 
@@ -1703,8 +1729,8 @@ local closestAngle = Settings.FOV
 local cameraPosition =  
 	camera.CFrame.Position  
 
-local lookVector =  
-	camera.CFrame.LookVector  
+-- usamos la dirección del FOV desplazado como referencia
+local lookVector = getFOVRay(camera)
 
 for _, player in ipairs(  
 	Players:GetPlayers()  
@@ -1814,17 +1840,85 @@ if Unloaded
 			* Settings.Prediction  
 		)  
 
-	local targetCFrame =  
-		CFrame.lookAt(  
-			camera.CFrame.Position,  
-			predictedPosition  
-		)  
+	-- Si hay offset, ajustamos el CFrame para que
+	-- el target quede bajo el centro del FOV desplazado,
+	-- no bajo el centro de pantalla.
+	if Settings.FOVOffsetX ~= 0
+		or Settings.FOVOffsetY ~= 0 then
 
-	camera.CFrame =  
-		camera.CFrame:Lerp(  
-			targetCFrame,  
-			Settings.Smoothness  
-		)  
+		local fovDir = getFOVRay(camera)
+
+		-- ángulo entre lookVector y fovDir
+		local lookVec = camera.CFrame.LookVector
+		local axis = lookVec:Cross(fovDir)
+
+		if axis.Magnitude > 1e-6 then
+
+			local angle = math.acos(
+				math.clamp(
+					lookVec:Dot(fovDir),
+					-1, 1
+				)
+			)
+
+			-- rotación que lleva lookVector → fovDir
+			local correction =
+				CFrame.fromAxisAngle(
+					axis.Unit,
+					-angle
+				)
+
+			-- aplicamos la corrección inversa al targetCFrame
+			-- para que el aim compense el offset
+			local targetCFrame =
+				CFrame.lookAt(
+					camera.CFrame.Position,
+					predictedPosition
+				)
+
+			local correctedCFrame =
+				camera.CFrame.Position
+				+ (correction * (targetCFrame.LookVector))
+
+			camera.CFrame =
+				camera.CFrame:Lerp(
+					CFrame.new(camera.CFrame.Position)
+					* CFrame.lookAt(
+						Vector3.zero,
+						correction * targetCFrame.LookVector
+					),
+					Settings.Smoothness
+				)
+
+		else
+
+			local targetCFrame =  
+				CFrame.lookAt(  
+					camera.CFrame.Position,  
+					predictedPosition  
+				)  
+
+			camera.CFrame =  
+				camera.CFrame:Lerp(  
+					targetCFrame,  
+					Settings.Smoothness  
+				)
+		end
+
+	else
+
+		local targetCFrame =  
+			CFrame.lookAt(  
+				camera.CFrame.Position,  
+				predictedPosition  
+			)  
+
+		camera.CFrame =  
+			camera.CFrame:Lerp(  
+				targetCFrame,  
+				Settings.Smoothness  
+			)
+	end
 end
 
 )
